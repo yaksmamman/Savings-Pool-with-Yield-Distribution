@@ -220,12 +220,3 @@ savings-pool/
 │   └── enhanced-savings-pool.test.ts    # Test suite
 └── readme.md                            # Documentation
 ```
-
-## Acknowledgments
-
-- Stacks Foundation
-
-## Authors
-
-- Michael Mamman - *Initial work* - [@michaelyak66](https://github.com/michaelyak66)
-
