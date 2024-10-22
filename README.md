@@ -2,6 +2,7 @@
 
 A blockchain-based savings pool on the **Stacks** blockchain that enables users to lock tokens, earn interest over time, and receive proportional yield based on their contributions. Early participants may receive bonuses, while early withdrawals incur penalties.
 
+
 ## Features
 
 ### 💰 Token Locking  
