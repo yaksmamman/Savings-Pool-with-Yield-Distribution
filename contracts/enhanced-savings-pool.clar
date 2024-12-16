@@ -131,3 +131,85 @@
 (define-read-only (get-rewards (user principal))
   (default-to u0 (map-get? rewards user)))
 
+;; Referral System
+(define-map referrers principal (list 10 principal))
+(define-map referral-rewards principal uint)
+(define-constant referral-bonus u5) ;; 5% bonus
+
+(define-public (add-referral (referrer principal))
+  (let ((caller tx-sender))
+    (asserts! (not (is-eq caller referrer)) (err u401))
+    (try! (append-referral referrer caller))
+    (ok true)))
+
+(define-private (append-referral (referrer principal) (referred principal))
+  (match (map-get? referrers referrer) 
+    referred-list (ok (map-set referrers referrer (unwrap! (as-max-len? (append referred-list referred) u10) (err u402))))
+    (ok (map-set referrers referrer (list referred)))))
+
+(define-read-only (get-referrals (user principal))
+  (default-to (list) (map-get? referrers user)))
+
+
+  ;; Staking Tiers System
+(define-constant bronze-tier u1000)
+(define-constant silver-tier u5000) 
+(define-constant gold-tier u10000)
+
+(define-map user-tiers principal uint)
+
+(define-read-only (get-user-tier (user principal))
+(let ((deposit-amount (get-deposit user)))
+  (if (>= deposit-amount gold-tier)
+      u3
+      (if (>= deposit-amount silver-tier)
+          u2
+          (if (>= deposit-amount bronze-tier)
+              u1
+              u0)))))
+              
+(define-read-only (get-tier-bonus (tier-level uint))
+(if (is-eq tier-level u3)
+    u10  ;; 10% bonus
+    (if (is-eq tier-level u2)
+        u7   ;; 7% bonus
+        (if (is-eq tier-level u1)
+            u5   ;; 5% bonus
+            u0))))    ;; 0% bonus
+
+
+;; Auto-compound Settings
+(define-map auto-compound-enabled principal bool)
+(define-data-var compound-interval uint u86400) ;; 24 hours in seconds
+
+(define-public (toggle-auto-compound)
+  (let ((caller tx-sender))
+    (map-set auto-compound-enabled 
+             caller 
+             (not (default-to false (map-get? auto-compound-enabled caller))))
+    (ok true)))
+
+(define-public (execute-auto-compound)
+  (let ((current-time block-height)
+        (user tx-sender)
+        (yield-amount (get-user-yield-estimate user)))
+    (asserts! (default-to false (map-get? auto-compound-enabled user)) (err u301))
+    (try! (as-contract (stx-transfer? yield-amount tx-sender user)))
+    (try! (deposit yield-amount))
+    (ok true)))
+
+
+;; Time-Lock Bonus System
+(define-map lock-end-times principal uint)
+(define-constant lock-bonus-rate u15) ;; 15% bonus for time lock
+
+(define-public (enable-time-lock (lock-duration uint))
+  (let ((caller tx-sender))
+    (asserts! (>= lock-duration u2592000) (err u201)) ;; Minimum 30 days
+    (map-set lock-end-times caller (+ block-height lock-duration))
+    (ok true)))
+
+(define-read-only (get-lock-status (user principal))
+  (let ((lock-end (default-to u0 (map-get? lock-end-times user))))
+    {locked: (> lock-end block-height),
+     end-time: lock-end}))
