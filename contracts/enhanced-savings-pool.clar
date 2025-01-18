@@ -289,3 +289,23 @@
     (ok voting-power)))
 
 
+
+(define-map savings-goals
+  principal
+  {target: uint, deadline: uint, current: uint})
+
+(define-public (set-savings-goal (target uint) (deadline uint))
+  (begin
+    (map-set savings-goals tx-sender
+      {target: target,
+       deadline: (+ block-height deadline),
+       current: (get-deposit tx-sender)})
+    (ok true)))
+
+(define-read-only (get-goal-progress (user principal))
+  (match (map-get? savings-goals user)
+    goal {progress: (/ (* (get current goal) u100) (get target goal)),
+          remaining: (- (get target goal) (get current goal))}
+    {progress: u0, remaining: u0}))
+
+
