@@ -247,3 +247,18 @@
     (map-get? user-achievements user)))
 
 
+
+;; Add these variables
+(define-data-var contract-paused bool false)
+(define-constant err-contract-paused (err u500))
+
+;; Add admin function
+(define-public (toggle-contract-pause)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set contract-paused (not (var-get contract-paused)))
+    (ok true)))
+
+;; Add to all public functions
+(asserts! (not (var-get contract-paused)) err-contract-paused)
+
