@@ -274,3 +274,18 @@
       (+ u500 (* utilization-rate (var-get utilization-multiplier))))
     (ok true)))
 
+
+(define-map vote-locked-deposits
+  principal
+  {amount: uint, unlock-height: uint, voting-power: uint})
+
+(define-public (vote-lock (amount uint) (lock-duration uint))
+  (let ((voting-power (* amount (/ lock-duration u2592000))))
+    (try! (deposit amount))
+    (map-set vote-locked-deposits tx-sender
+      {amount: amount,
+       unlock-height: (+ block-height lock-duration),
+       voting-power: voting-power})
+    (ok voting-power)))
+
+
