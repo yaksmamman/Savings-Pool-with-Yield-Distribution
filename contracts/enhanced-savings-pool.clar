@@ -309,3 +309,23 @@
     {progress: u0, remaining: u0}))
 
 
+
+(define-map loyalty-points principal uint)
+(define-map loyalty-tiers
+  uint 
+  {min-points: uint, bonus-rate: uint})
+
+(define-public (calculate-loyalty-points (user principal))
+  (let ((deposit-amount (get-deposit user))
+        (lock-duration (get-lock-duration user))
+        (points (* deposit-amount (/ lock-duration u2592000))))
+    (map-set loyalty-points user 
+      (+ (default-to u0 (map-get? loyalty-points user)) points))
+    (ok points)))
+
+
+(define-read-only (get-lock-duration (user principal))
+  (let ((lock-end (default-to u0 (map-get? lock-end-times user))))
+    (if (> lock-end block-height)
+        (- lock-end block-height)
+        u0)))
