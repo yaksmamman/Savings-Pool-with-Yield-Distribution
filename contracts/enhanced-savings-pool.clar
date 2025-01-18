@@ -231,3 +231,19 @@
     (ok true)))
 
 
+
+;; Add achievement tracking
+(define-map user-achievements 
+  principal 
+  {deposit-streak: uint,
+   total-deposited: uint,
+   referrals-made: uint})
+
+(define-read-only (get-user-achievements (user principal))
+  (default-to 
+    {deposit-streak: u0,
+     total-deposited: u0,
+     referrals-made: u0}
+    (map-get? user-achievements user)))
+
+
