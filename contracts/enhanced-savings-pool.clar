@@ -213,3 +213,21 @@
   (let ((lock-end (default-to u0 (map-get? lock-end-times user))))
     {locked: (> lock-end block-height),
      end-time: lock-end}))
+
+
+;; Add these maps
+(define-map referral-chain 
+  principal 
+  {referrer: (optional principal), 
+   rewards: uint})
+
+(define-public (refer-user (new-user principal))
+  (let ((referrer tx-sender))
+    (asserts! (not (is-eq new-user referrer)) (err u401))
+    (map-set referral-chain 
+             new-user 
+             {referrer: (some referrer), 
+              rewards: u0})
+    (ok true)))
+
+
