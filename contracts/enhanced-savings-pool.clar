@@ -262,3 +262,15 @@
 ;; Add to all public functions
 (asserts! (not (var-get contract-paused)) err-contract-paused)
 
+
+;; Add these variables
+(define-data-var base-interest-rate uint u500) ;; 5% base rate
+(define-data-var utilization-multiplier uint u100)
+(define-map interest-rate-history uint uint)
+
+(define-public (update-interest-rate)
+  (let ((utilization-rate (/ (* (var-get total-deposits) u10000) u1000000)))
+    (var-set base-interest-rate 
+      (+ u500 (* utilization-rate (var-get utilization-multiplier))))
+    (ok true)))
+
