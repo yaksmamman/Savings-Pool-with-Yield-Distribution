@@ -329,3 +329,176 @@
     (if (> lock-end block-height)
         (- lock-end block-height)
         u0)))
+
+
+
+(define-map referral-multiplier principal uint)
+(define-constant base-multiplier u100)
+(define-constant multiplier-increment u10)
+
+(define-public (increase-referral-multiplier)
+  (let ((current-multiplier (default-to base-multiplier (map-get? referral-multiplier tx-sender))))
+    (map-set referral-multiplier tx-sender (+ current-multiplier multiplier-increment))
+    (ok true)))
+
+
+(define-map deposit-streak principal uint)
+(define-constant streak-bonus u5) ;; 0.5% bonus per streak
+
+(define-public (update-streak)
+  (let ((current-streak (default-to u0 (map-get? deposit-streak tx-sender))))
+    (map-set deposit-streak tx-sender (+ current-streak u1))
+    (ok true)))
+
+
+(define-map community-pool-share principal uint)
+(define-data-var total-community-pool uint u0)
+
+(define-public (join-community-pool (amount uint))
+  (begin
+    (try! (deposit amount))
+    (map-set community-pool-share tx-sender amount)
+    (var-set total-community-pool (+ (var-get total-community-pool) amount))
+    (ok true)))
+
+
+
+(define-map savings-challenge 
+  principal 
+  {target: uint, deadline: uint, completed: bool})
+
+(define-public (start-challenge (target uint) (duration uint))
+  (begin
+    (map-set savings-challenge tx-sender
+      {target: target,
+       deadline: (+ block-height duration),
+       completed: false})
+    (ok true)))
+
+
+
+
+(define-map interest-tiers principal uint)
+(define-constant tier1-rate u500) ;; 5%
+(define-constant tier2-rate u700) ;; 7%
+(define-constant tier3-rate u1000) ;; 10%
+
+(define-public (calculate-tier-interest)
+  (let ((deposit-amount (get-deposit tx-sender)))
+    (map-set interest-tiers tx-sender
+      (if (>= deposit-amount u10000) 
+          tier3-rate
+          (if (>= deposit-amount u5000)
+              tier2-rate
+              tier1-rate)))
+    (ok true)))
+
+
+
+(define-map emergency-contacts principal principal)
+(define-map contact-approval principal bool)
+
+(define-public (set-emergency-contact (contact principal))
+  (begin
+    (map-set emergency-contacts tx-sender contact)
+    (map-set contact-approval contact false)
+    (ok true)))
+
+
+
+(define-map withdrawal-schedule 
+  principal 
+  {amount: uint, date: uint, recurring: bool})
+
+(define-public (schedule-withdrawal (amount uint) (future-block uint))
+  (begin
+    (map-set withdrawal-schedule tx-sender
+      {amount: amount,
+       date: future-block,
+       recurring: false})
+    (ok true)))
+
+
+
+(define-map savings-goals-rewards
+  principal
+  {goal: uint, achieved: bool, reward: uint})
+
+(define-public (set-savings-goal-with-reward (goal-amount uint))
+  (begin
+    (map-set savings-goals-rewards tx-sender
+      {goal: goal-amount,
+       achieved: false,
+       reward: (/ goal-amount u20)}) ;; 5% reward
+    (ok true)))
+
+
+
+(define-map seasonal-bonus-periods 
+  uint 
+  {start-block: uint, end-block: uint, bonus-rate: uint})
+(define-data-var current-season uint u1)
+
+(define-public (activate-seasonal-bonus (duration uint) (bonus uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (map-set seasonal-bonus-periods (var-get current-season)
+      {start-block: block-height,
+       end-block: (+ block-height duration),
+       bonus-rate: bonus})
+    (var-set current-season (+ (var-get current-season) u1))
+    (ok true)))
+
+
+
+(define-map vip-status principal bool)
+(define-map vip-benefits principal 
+  {bonus-rate: uint, 
+   priority-withdrawal: bool,
+   custom-lock-periods: bool})
+
+(define-public (activate-vip-status)
+  (let ((user-deposit (get-deposit tx-sender)))
+    (asserts! (>= user-deposit u50000) (err u401))
+    (map-set vip-status tx-sender true)
+    (map-set vip-benefits tx-sender
+      {bonus-rate: u200,
+       priority-withdrawal: true,
+       custom-lock-periods: true})
+    (ok true)))
+
+
+
+(define-map deposit-strategy
+  principal
+  {target-yield: uint,
+   auto-rebalance: bool,
+   risk-level: uint})
+
+(define-public (set-deposit-strategy (target-yield uint) (risk-level uint))
+  (begin
+    (map-set deposit-strategy tx-sender
+      {target-yield: target-yield,
+       auto-rebalance: true,
+       risk-level: risk-level})
+    (ok true)))
+
+
+
+(define-map user-badges
+  principal
+  (list 10 {badge-id: uint, earned-at: uint, bonus-points: uint}))
+(define-constant savings-master-badge u1)
+(define-constant quick-starter-badge u2)
+(define-constant loyal-saver-badge u3)
+
+(define-public (award-badge (badge-id uint))
+  (let ((current-badges (default-to (list) (map-get? user-badges tx-sender))))
+    (map-set user-badges tx-sender
+      (unwrap! (as-max-len? 
+        (append current-badges 
+          {badge-id: badge-id,
+           earned-at: block-height,
+           bonus-points: u100}) u10)
+        (err u403)))
+    (ok true)))
