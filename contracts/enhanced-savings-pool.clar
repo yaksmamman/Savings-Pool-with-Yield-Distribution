@@ -213,3 +213,119 @@
   (let ((lock-end (default-to u0 (map-get? lock-end-times user))))
     {locked: (> lock-end block-height),
      end-time: lock-end}))
+
+
+;; Add these maps
+(define-map referral-chain 
+  principal 
+  {referrer: (optional principal), 
+   rewards: uint})
+
+(define-public (refer-user (new-user principal))
+  (let ((referrer tx-sender))
+    (asserts! (not (is-eq new-user referrer)) (err u401))
+    (map-set referral-chain 
+             new-user 
+             {referrer: (some referrer), 
+              rewards: u0})
+    (ok true)))
+
+
+
+;; Add achievement tracking
+(define-map user-achievements 
+  principal 
+  {deposit-streak: uint,
+   total-deposited: uint,
+   referrals-made: uint})
+
+(define-read-only (get-user-achievements (user principal))
+  (default-to 
+    {deposit-streak: u0,
+     total-deposited: u0,
+     referrals-made: u0}
+    (map-get? user-achievements user)))
+
+
+
+;; Add these variables
+(define-data-var contract-paused bool false)
+(define-constant err-contract-paused (err u500))
+
+;; Add admin function
+(define-public (toggle-contract-pause)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set contract-paused (not (var-get contract-paused)))
+    (ok true)))
+
+;; Add to all public functions
+(asserts! (not (var-get contract-paused)) err-contract-paused)
+
+
+;; Add these variables
+(define-data-var base-interest-rate uint u500) ;; 5% base rate
+(define-data-var utilization-multiplier uint u100)
+(define-map interest-rate-history uint uint)
+
+(define-public (update-interest-rate)
+  (let ((utilization-rate (/ (* (var-get total-deposits) u10000) u1000000)))
+    (var-set base-interest-rate 
+      (+ u500 (* utilization-rate (var-get utilization-multiplier))))
+    (ok true)))
+
+
+(define-map vote-locked-deposits
+  principal
+  {amount: uint, unlock-height: uint, voting-power: uint})
+
+(define-public (vote-lock (amount uint) (lock-duration uint))
+  (let ((voting-power (* amount (/ lock-duration u2592000))))
+    (try! (deposit amount))
+    (map-set vote-locked-deposits tx-sender
+      {amount: amount,
+       unlock-height: (+ block-height lock-duration),
+       voting-power: voting-power})
+    (ok voting-power)))
+
+
+
+(define-map savings-goals
+  principal
+  {target: uint, deadline: uint, current: uint})
+
+(define-public (set-savings-goal (target uint) (deadline uint))
+  (begin
+    (map-set savings-goals tx-sender
+      {target: target,
+       deadline: (+ block-height deadline),
+       current: (get-deposit tx-sender)})
+    (ok true)))
+
+(define-read-only (get-goal-progress (user principal))
+  (match (map-get? savings-goals user)
+    goal {progress: (/ (* (get current goal) u100) (get target goal)),
+          remaining: (- (get target goal) (get current goal))}
+    {progress: u0, remaining: u0}))
+
+
+
+(define-map loyalty-points principal uint)
+(define-map loyalty-tiers
+  uint 
+  {min-points: uint, bonus-rate: uint})
+
+(define-public (calculate-loyalty-points (user principal))
+  (let ((deposit-amount (get-deposit user))
+        (lock-duration (get-lock-duration user))
+        (points (* deposit-amount (/ lock-duration u2592000))))
+    (map-set loyalty-points user 
+      (+ (default-to u0 (map-get? loyalty-points user)) points))
+    (ok points)))
+
+
+(define-read-only (get-lock-duration (user principal))
+  (let ((lock-end (default-to u0 (map-get? lock-end-times user))))
+    (if (> lock-end block-height)
+        (- lock-end block-height)
+        u0)))
