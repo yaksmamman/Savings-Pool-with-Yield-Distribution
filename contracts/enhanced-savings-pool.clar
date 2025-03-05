@@ -12,6 +12,13 @@
 (define-constant err-max-deposit-exceeded (err u107))
 (define-constant err-early-withdrawal (err u108))
 (define-constant err-not-eligible-for-reward (err u109))
+(define-map user-milestones principal (list 5 uint))
+(define-constant milestone-1 u1000)
+(define-constant milestone-2 u5000)
+(define-constant milestone-3 u10000)
+(define-constant milestone-reward-1 u50)
+(define-constant milestone-reward-2 u150)
+(define-constant milestone-reward-3 u300)
 
 ;; Data vars
 (define-data-var pool-locked bool false)
@@ -501,4 +508,139 @@
            earned-at: block-height,
            bonus-points: u100}) u10)
         (err u403)))
+    (ok true)))
+
+
+
+
+
+(define-private (award-milestone-reward (amount uint))
+  (begin
+    (try! (as-contract (stx-transfer? amount tx-sender tx-sender)))
+    (ok amount)))
+
+(define-public (check-milestones)
+  (let ((deposit-amount (get-deposit tx-sender)))
+    (if (>= deposit-amount milestone-3)
+        (try! (award-milestone-reward milestone-reward-3))
+        (if (>= deposit-amount milestone-2)
+            (try! (award-milestone-reward milestone-reward-2))
+            (if (>= deposit-amount milestone-1)
+                (try! (award-milestone-reward milestone-reward-1))
+                (try! (award-milestone-reward u0)))))
+    (ok true)))
+
+
+
+(define-map savings-groups 
+  uint 
+  {members: (list 10 principal),
+   group-target: uint,
+   group-balance: uint})
+(define-data-var group-counter uint u0)
+
+(define-public (create-savings-group (target uint))
+  (let ((group-id (+ (var-get group-counter) u1)))
+    (var-set group-counter group-id)
+    (map-set savings-groups group-id
+      {members: (list tx-sender),
+       group-target: target,
+       group-balance: u0})
+    (ok group-id)))
+
+
+(define-map user-notifications 
+  principal 
+  (list 50 {type: uint, message: (string-ascii 50), timestamp: uint}))
+(define-constant notification-deposit u1)
+(define-constant notification-goal u2)
+(define-constant notification-reward u3)
+
+(define-public (add-notification (type uint) (message (string-ascii 50)))
+  (let ((current-notifications (default-to (list) (map-get? user-notifications tx-sender))))
+    (map-set user-notifications tx-sender
+      (unwrap! (as-max-len? 
+        (append current-notifications 
+          {type: type,
+           message: message,
+           timestamp: block-height}) u50)
+        (err u404)))
+    (ok true)))
+
+(define-map challenge-participants principal uint)
+(define-data-var challenge-start-time uint u0)
+(define-data-var challenge-duration uint u2592000) ;; 30 days
+(define-data-var challenge-prize-pool uint u0)
+
+(define-public (join-savings-challenge (stake uint))
+  (begin
+    (try! (deposit stake))
+    (map-set challenge-participants tx-sender stake)
+    (var-set challenge-prize-pool (+ (var-get challenge-prize-pool) stake))
+    (ok true)))
+
+(define-map savings-achievements 
+  principal 
+  {goals-completed: uint,
+   nft-earned: (list 10 uint)})
+(define-constant achievement-nft-1 u1)
+(define-constant achievement-nft-2 u2)
+(define-constant achievement-nft-3 u3)
+
+(define-public (mint-achievement-nft (achievement-id uint))
+  (let ((current-achievements (default-to 
+         {goals-completed: u0, nft-earned: (list)} 
+         (map-get? savings-achievements tx-sender))))
+    (map-set savings-achievements tx-sender
+      {goals-completed: (+ (get goals-completed current-achievements) u1),
+       nft-earned: (unwrap! (as-max-len? 
+                    (append (get nft-earned current-achievements) achievement-id)
+                    u10)
+                    (err u405))})
+    (ok true)))
+
+
+
+
+(define-map withdrawal-preferences
+  principal
+  {schedule: uint,
+   split-amount: uint,
+   auto-reinvest: bool})
+
+(define-public (set-withdrawal-preferences 
+    (schedule uint) 
+    (split-amount uint) 
+    (auto-reinvest bool))
+  (begin
+    (map-set withdrawal-preferences tx-sender
+      {schedule: schedule,
+       split-amount: split-amount,
+       auto-reinvest: auto-reinvest})
+    (ok true)))
+
+
+(define-map risk-profiles
+  principal
+  {risk-score: uint,
+   max-deposit: uint,
+   withdrawal-limit: uint})
+(define-constant low-risk u1)
+(define-constant medium-risk u2)
+(define-constant high-risk u3)
+
+(define-public (set-risk-profile (risk-level uint))
+  (begin
+    (map-set risk-profiles tx-sender
+      {risk-score: risk-level,
+       max-deposit: (if (is-eq risk-level low-risk)
+                       u5000
+                       (if (is-eq risk-level medium-risk)
+                           u20000
+                           u50000)),
+       withdrawal-limit: (if (is-eq risk-level low-risk)
+                           u1000
+                           (if (is-eq risk-level medium-risk)
+                               u5000
+                               u10000))})
     (ok true)))
