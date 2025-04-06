@@ -644,3 +644,211 @@
                                u5000
                                u10000))})
     (ok true)))
+
+
+
+
+(define-map supported-tokens (string-ascii 10) bool)
+(define-map token-balances (tuple (token (string-ascii 10)) (user principal)) uint)
+
+(define-public (add-supported-token (token (string-ascii 10)))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (map-set supported-tokens token true)
+    (ok true)))
+
+(define-public (deposit-token (token (string-ascii 10)) (amount uint))
+  (let ((caller tx-sender))
+    (asserts! (default-to false (map-get? supported-tokens token)) (err u600))
+    (map-set token-balances (tuple (token token) (user caller)) amount)
+    (ok true)))
+
+
+
+
+(define-map leaderboard-scores principal uint)
+(define-data-var leaderboard-update-height uint u0)
+
+(define-public (update-leaderboard)
+  (let ((user-deposit (get-deposit tx-sender)))
+    (map-set leaderboard-scores tx-sender user-deposit)
+    (var-set leaderboard-update-height block-height)
+    (ok true)))
+
+(define-read-only (get-user-rank (user principal))
+  (default-to u0 (map-get? leaderboard-scores user)))
+
+
+
+
+(define-map smart-goals 
+  principal 
+  {target-amount: uint,
+   target-date: uint,
+   monthly-deposit: uint,
+   progress: uint})
+
+(define-public (create-smart-goal (target uint) (months uint))
+  (let ((monthly-amount (/ target months)))
+    (map-set smart-goals tx-sender
+      {target-amount: target,
+       target-date: (+ block-height (* months u4380)),
+       monthly-deposit: monthly-amount,
+       progress: u0})
+    (ok true)))
+
+
+
+(define-map savings-circles 
+  uint 
+  {members: (list 5 principal),
+   circle-goal: uint,
+   total-saved: uint})
+
+(define-data-var circle-counter uint u0)
+
+(define-public (create-circle (goal uint))
+  (let ((circle-id (+ (var-get circle-counter) u1)))
+    (var-set circle-counter circle-id)
+    (map-set savings-circles circle-id
+      {members: (list tx-sender),
+       circle-goal: goal,
+       total-saved: u0})
+    (ok circle-id)))
+
+
+(define-map lock-options principal 
+  {period: uint,
+   bonus-rate: uint,
+   amount: uint})
+
+(define-public (set-custom-lock (period uint) (amount uint))
+  (let ((bonus-rate (if (>= period u5184000)
+                       u200
+                       (if (>= period u2592000)
+                           u150
+                           u100))))
+    (map-set lock-options tx-sender
+      {period: period,
+       bonus-rate: bonus-rate,
+       amount: amount})
+    (ok true)))
+
+
+(define-map partial-withdrawal-settings principal {enabled: bool, min-amount: uint, cooldown-period: uint})
+(define-data-var global-min-withdrawal uint u100)
+
+(define-public (configure-partial-withdrawals (enabled bool) (min-amount uint) (cooldown-period uint))
+  (begin
+    (map-set partial-withdrawal-settings tx-sender 
+      {enabled: enabled, 
+       min-amount: min-amount, 
+       cooldown-period: cooldown-period})
+    (ok true)))
+
+(define-public (partial-withdraw (amount uint))
+  (let ((caller tx-sender)
+        (user-deposit (default-to u0 (map-get? deposits caller)))
+        (settings (default-to {enabled: false, min-amount: u0, cooldown-period: u0} 
+                   (map-get? partial-withdrawal-settings caller)))
+        (yield-share (/ (* amount (var-get total-yield)) (var-get total-deposits))))
+    (asserts! (not (var-get pool-locked)) err-pool-locked)
+    (asserts! (>= user-deposit amount) err-insufficient-balance)
+    (asserts! (get enabled settings) (err u601))
+    (asserts! (>= amount (get min-amount settings)) (err u602))
+    (asserts! (>= amount (var-get global-min-withdrawal)) (err u603))
+    (try! (as-contract (stx-transfer? (+ amount yield-share) tx-sender caller)))
+    (map-set deposits caller (- user-deposit amount))
+    (var-set total-deposits (- (var-get total-deposits) amount))
+    (map-set transaction-history (tuple (user caller) (tx-type tx-withdraw)) amount)
+    (ok amount)))
+
+
+
+(define-map savings-goal-tracker 
+  principal 
+  {goal-name: (string-ascii 20), 
+   target-amount: uint, 
+   current-amount: uint, 
+   deadline: uint,
+   completed: bool})
+
+(define-public (create-savings-goal (goal-name (string-ascii 20)) (target-amount uint) (deadline uint))
+  (begin
+    (map-set savings-goal-tracker tx-sender
+      {goal-name: goal-name,
+       target-amount: target-amount,
+       current-amount: u0,
+       deadline: (+ block-height deadline),
+       completed: false})
+    (ok true)))
+
+(define-public (update-goal-progress (amount uint))
+  (let ((current-goal (default-to 
+                       {goal-name: "", target-amount: u0, current-amount: u0, deadline: u0, completed: false}
+                       (map-get? savings-goal-tracker tx-sender)))
+        (new-amount (+ (get current-amount current-goal) amount)))
+    (map-set savings-goal-tracker tx-sender
+      (merge current-goal {current-amount: new-amount, 
+                          completed: (>= new-amount (get target-amount current-goal))}))
+    (ok true)))
+
+(define-read-only (get-goal-status (user principal))
+  (let ((goal (default-to 
+              {goal-name: "", target-amount: u0, current-amount: u0, deadline: u0, completed: false}
+              (map-get? savings-goal-tracker user))))
+    {name: (get goal-name goal),
+     progress-percentage: (if (is-eq (get target-amount goal) u0) 
+                             u0 
+                             (/ (* (get current-amount goal) u100) (get target-amount goal))),
+     remaining-amount: (- (get target-amount goal) (get current-amount goal)),
+     days-remaining: (if (> (get deadline goal) block-height)
+                        (/ (- (get deadline goal) block-height) u144)
+                        u0),
+     completed: (get completed goal)}))
+
+
+(define-map round-up-settings principal 
+  {enabled: bool, 
+   round-to: uint, 
+   last-deposit: uint,
+   total-rounded-up: uint})
+
+(define-public (enable-round-up-savings (round-to uint))
+  (begin
+    (map-set round-up-settings tx-sender
+      {enabled: true,
+       round-to: round-to,
+       last-deposit: u0,
+       total-rounded-up: u0})
+    (ok true)))
+
+(define-public (deposit-with-round-up (amount uint))
+  (let ((settings (default-to 
+                  {enabled: false, round-to: u0, last-deposit: u0, total-rounded-up: u0}
+                  (map-get? round-up-settings tx-sender)))
+        (rounded-amount (if (get enabled settings)
+                           (* (+ (/ amount (get round-to settings)) u1) (get round-to settings))
+                           amount))
+        (round-up-amount (- rounded-amount amount)))
+    (try! (deposit amount))
+    (if (and (get enabled settings) (> round-up-amount u0))
+      (begin
+        (try! (deposit round-up-amount))
+        (map-set round-up-settings tx-sender
+          (merge settings 
+            {last-deposit: block-height,
+             total-rounded-up: (+ (get total-rounded-up settings) round-up-amount)})))
+        true)
+    (ok rounded-amount)))
+(define-read-only (get-round-up-stats (user principal))
+  (let ((settings (default-to 
+                  {enabled: false, round-to: u0, last-deposit: u0, total-rounded-up: u0}
+                  (map-get? round-up-settings user))))
+    {enabled: (get enabled settings),
+     round-to: (get round-to settings),
+     total-rounded-up: (get total-rounded-up settings)}))
+
+
+
+
