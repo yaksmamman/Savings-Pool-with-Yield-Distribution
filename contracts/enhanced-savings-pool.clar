@@ -933,3 +933,48 @@
 (define-read-only (get-current-interest-rate)
     (ok (let ((market-data (unwrap! (map-get? market-conditions (var-get current-market-cycle)) (err u703))))
         (/ (* (get base-rate market-data) (get multiplier market-data)) u100))))
+
+
+
+
+(define-map savings-ladder
+  principal
+  (list 5 {amount: uint,
+           lock-end: uint,
+           rate: uint,
+           position-id: uint}))
+
+(define-data-var ladder-position-counter uint u0)
+(define-constant min-ladder-amount u1000)
+(define-constant max-positions u5)
+
+(define-public (create-ladder-position (amount uint) (lock-period-new uint))
+    (let ((user tx-sender)
+          (position-id (+ (var-get ladder-position-counter) u1))
+          (current-positions (default-to (list) (map-get? savings-ladder user))))
+        
+        (asserts! (>= amount min-ladder-amount) (err u801))
+        (asserts! (< (len current-positions) max-positions) (err u802))
+        
+        (try! (deposit amount))
+        (var-set ladder-position-counter position-id)
+        
+        (map-set savings-ladder user
+            (unwrap! (as-max-len? 
+                (append current-positions
+                    {amount: amount,
+                     lock-end: (+ block-height lock-period-new),
+                     rate: (calculate-ladder-rate lock-period-new),
+                     position-id: position-id})
+                u5)
+                (err u803)))
+        (ok position-id)))
+(define-private (calculate-ladder-rate (lock-period-new uint))
+    (if (>= lock-period-new u7776000)
+        u1000
+        (if (>= lock-period-new u5184000)
+            u800
+            u600)))
+
+(define-read-only (get-ladder-positions (user principal))
+    (default-to (list) (map-get? savings-ladder user)))
