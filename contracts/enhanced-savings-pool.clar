@@ -852,3 +852,48 @@
 
 
 
+(define-map reward-tiers principal 
+  {tier: uint,
+   points: uint,
+   last-claim: uint})
+
+(define-constant tier1-threshold u1000)
+(define-constant tier2-threshold u5000) 
+(define-constant tier3-threshold u10000)
+
+(define-constant tier1-multiplier u10)
+(define-constant tier2-multiplier u20)
+(define-constant tier3-multiplier u30)
+
+(define-public (calculate-rewards)
+  (let ((user-deposit (get-deposit tx-sender))
+        (current-tier (default-to 
+                       {tier: u0, points: u0, last-claim: u0}
+                       (map-get? reward-tiers tx-sender)))
+        (blocks-since-claim (- block-height (get last-claim current-tier))))
+    
+    (map-set reward-tiers tx-sender
+      {tier: (if (>= user-deposit tier3-threshold) 
+               u3
+               (if (>= user-deposit tier2-threshold)
+                 u2
+                 (if (>= user-deposit tier1-threshold)
+                   u1
+                   u0))),
+       points: (+ (get points current-tier)
+                 (* blocks-since-claim
+                    (if (>= user-deposit tier3-threshold)
+                      tier3-multiplier
+                      (if (>= user-deposit tier2-threshold)
+                        tier2-multiplier
+                        tier1-multiplier)))),
+       last-claim: block-height})
+    (ok true)))
+
+(define-read-only (get-user-rewards (user principal))
+  (default-to 
+    {tier: u0, points: u0, last-claim: u0}
+    (map-get? reward-tiers user)))
+
+
+
