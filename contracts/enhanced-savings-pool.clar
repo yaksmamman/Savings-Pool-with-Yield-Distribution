@@ -897,3 +897,39 @@
 
 
 
+
+(define-map market-conditions 
+  uint 
+  {timestamp: uint,
+   base-rate: uint,
+   utilization: uint,
+   multiplier: uint})
+
+(define-data-var current-market-cycle uint u0)
+(define-data-var min-interest-rate uint u300)
+(define-data-var max-interest-rate uint u2000)
+
+(define-public (update-market-conditions (base-rate uint) (utilization uint))
+    (let ((cycle-id (+ (var-get current-market-cycle) u1))
+          (multiplier (calculate-dynamic-multiplier utilization)))
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (<= base-rate (var-get max-interest-rate)) (err u701))
+        (asserts! (>= base-rate (var-get min-interest-rate)) (err u702))
+        (map-set market-conditions cycle-id
+            {timestamp: block-height,
+             base-rate: base-rate,
+             utilization: utilization,
+             multiplier: multiplier})
+        (var-set current-market-cycle cycle-id)
+        (ok true)))
+
+(define-private (calculate-dynamic-multiplier (utilization uint))
+    (if (>= utilization u8000)
+        u150
+        (if (>= utilization u5000)
+            u125
+            u100)))
+
+(define-read-only (get-current-interest-rate)
+    (ok (let ((market-data (unwrap! (map-get? market-conditions (var-get current-market-cycle)) (err u703))))
+        (/ (* (get base-rate market-data) (get multiplier market-data)) u100))))
