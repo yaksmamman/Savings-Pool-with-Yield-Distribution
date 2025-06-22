@@ -978,3 +978,230 @@
 
 (define-read-only (get-ladder-positions (user principal))
     (default-to (list) (map-get? savings-ladder user)))
+
+
+(define-constant err-protocol-not-found (err u900))
+(define-constant err-insufficient-farming-balance (err u901))
+(define-constant err-farming-disabled (err u902))
+(define-constant err-protocol-limit-reached (err u903))
+(define-constant err-invalid-allocation (err u904))
+
+(define-data-var farming-enabled bool true)
+(define-data-var total-farming-balance uint u0)
+(define-data-var farming-protocol-counter uint u0)
+(define-data-var max-protocols uint u5)
+(define-data-var farming-threshold uint u10000)
+
+(define-map farming-protocols
+  uint
+  {protocol-name: (string-ascii 20),
+   contract-address: principal,
+   allocation-percentage: uint,
+   total-staked: uint,
+   last-harvest: uint,
+   active: bool})
+
+(define-map user-farming-shares
+  principal
+  {total-shares: uint,
+   last-update: uint,
+   pending-rewards: uint})
+
+(define-map protocol-yields
+  uint
+  {total-earned: uint,
+   last-yield-rate: uint,
+   harvest-count: uint})
+
+(define-public (register-farming-protocol 
+    (protocol-name (string-ascii 20))
+    (contract-address principal)
+    (allocation-percentage uint))
+  (let ((protocol-id (+ (var-get farming-protocol-counter) u1)))
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (<= (var-get farming-protocol-counter) (var-get max-protocols)) err-protocol-limit-reached)
+    (asserts! (<= allocation-percentage u100) err-invalid-allocation)
+    
+    (map-set farming-protocols protocol-id
+      {protocol-name: protocol-name,
+       contract-address: contract-address,
+       allocation-percentage: allocation-percentage,
+       total-staked: u0,
+       last-harvest: block-height,
+       active: true})
+    
+    (var-set farming-protocol-counter protocol-id)
+    (ok protocol-id)))
+
+(define-public (stake-in-farming-protocol (protocol-id uint) (amount uint))
+  (let ((protocol (unwrap! (map-get? farming-protocols protocol-id) err-protocol-not-found))
+        (available-balance (- (var-get total-deposits) (var-get total-farming-balance))))
+    
+    (asserts! (var-get farming-enabled) err-farming-disabled)
+    (asserts! (get active protocol) err-protocol-not-found)
+    (asserts! (>= available-balance amount) err-insufficient-farming-balance)
+    (asserts! (>= (var-get total-deposits) (var-get farming-threshold)) err-insufficient-balance)
+    
+    (map-set farming-protocols protocol-id
+      (merge protocol {total-staked: (+ (get total-staked protocol) amount)}))
+    
+    (var-set total-farming-balance (+ (var-get total-farming-balance) amount))
+    (ok true)))
+
+(define-public (harvest-farming-rewards (protocol-id uint))
+  (let ((protocol (unwrap! (map-get? farming-protocols protocol-id) err-protocol-not-found))
+        (yield-amount (calculate-protocol-yield protocol-id))
+        (current-yields (default-to 
+          {total-earned: u0, last-yield-rate: u0, harvest-count: u0}
+          (map-get? protocol-yields protocol-id))))
+    
+    (asserts! (get active protocol) err-protocol-not-found)
+    (asserts! (> yield-amount u0) err-no-yield)
+    
+    (map-set protocol-yields protocol-id
+      {total-earned: (+ (get total-earned current-yields) yield-amount),
+       last-yield-rate: (/ (* yield-amount u10000) (get total-staked protocol)),
+       harvest-count: (+ (get harvest-count current-yields) u1)})
+    
+    (map-set farming-protocols protocol-id
+      (merge protocol {last-harvest: block-height}))
+    
+    (var-set total-yield (+ (var-get total-yield) yield-amount))
+    (unwrap! (distribute-farming-rewards yield-amount) (err u905))
+    (ok yield-amount)))
+
+(define-public (unstake-from-farming-protocol (protocol-id uint) (amount uint))
+  (let ((protocol (unwrap! (map-get? farming-protocols protocol-id) err-protocol-not-found)))
+    
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (>= (get total-staked protocol) amount) err-insufficient-farming-balance)
+    
+    (map-set farming-protocols protocol-id
+      (merge protocol {total-staked: (- (get total-staked protocol) amount)}))
+    
+    (var-set total-farming-balance (- (var-get total-farming-balance) amount))
+    (ok true)))
+
+(define-public (update-user-farming-shares (user principal))
+  (let ((user-deposit (get-deposit user))
+        (total-pool (var-get total-deposits))
+        (farming-share (if (> total-pool u0)
+                         (/ (* user-deposit (var-get total-farming-balance)) total-pool)
+                         u0))
+        (current-shares (default-to 
+          {total-shares: u0, last-update: u0, pending-rewards: u0}
+          (map-get? user-farming-shares user))))
+    
+    (map-set user-farming-shares user
+      {total-shares: farming-share,
+       last-update: block-height,
+       pending-rewards: (get pending-rewards current-shares)})
+    (ok farming-share)))
+
+(define-public (claim-farming-rewards)
+  (let ((user-shares (unwrap! (map-get? user-farming-shares tx-sender) err-not-eligible-for-reward))
+        (pending-amount (get pending-rewards user-shares)))
+    
+    (asserts! (> pending-amount u0) err-no-yield)
+    
+    (try! (as-contract (stx-transfer? pending-amount tx-sender tx-sender)))
+    
+    (map-set user-farming-shares tx-sender
+      (merge user-shares {pending-rewards: u0}))
+    
+    (ok pending-amount)))
+
+(define-public (toggle-farming-status)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set farming-enabled (not (var-get farming-enabled)))
+    (ok (var-get farming-enabled))))
+
+(define-public (emergency-unstake-all)
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set total-farming-balance u0)
+    (var-set farming-enabled false)
+    (ok true)))
+
+(define-public (rebalance-farming-allocations)
+  (let ((total-available (- (var-get total-deposits) (var-get total-farming-balance))))
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (>= total-available (var-get farming-threshold)) err-insufficient-balance)
+    (unwrap! (auto-allocate-to-protocols total-available) (err u906))
+    (ok true)))
+
+(define-private (calculate-protocol-yield (protocol-id uint))
+  (let ((protocol (map-get? farming-protocols protocol-id))
+        (base-yield-rate u50))
+    (match protocol
+      p (let ((blocks-since-harvest (- block-height (get last-harvest p))))
+           (/ (* (get total-staked p) base-yield-rate blocks-since-harvest) u1000000))
+      u0)))
+
+(define-private (distribute-farming-rewards (total-rewards uint))
+  (begin
+    (var-set total-yield (+ (var-get total-yield) total-rewards))
+    (ok true)))
+
+(define-private (auto-allocate-to-protocols (available-amount uint))
+  (let ((allocation-amount (/ (* available-amount u80) u100)))
+    (if (> allocation-amount u0)
+      (begin
+        (var-set total-farming-balance (+ (var-get total-farming-balance) allocation-amount))
+        (ok true))
+      (ok false))))
+
+(define-read-only (get-farming-protocol (protocol-id uint))
+  (map-get? farming-protocols protocol-id))
+
+(define-read-only (get-user-farming-info (user principal))
+  (let ((shares (default-to 
+          {total-shares: u0, last-update: u0, pending-rewards: u0}
+          (map-get? user-farming-shares user)))
+        (estimated-rewards (calculate-user-farming-rewards user)))
+    {shares: (get total-shares shares),
+     last-update: (get last-update shares),
+     pending-rewards: (get pending-rewards shares),
+     estimated-rewards: estimated-rewards}))
+
+(define-read-only (get-farming-stats)
+  {farming-enabled: (var-get farming-enabled),
+   total-farming-balance: (var-get total-farming-balance),
+   active-protocols: (var-get farming-protocol-counter),
+   farming-threshold: (var-get farming-threshold),
+   utilization-rate: (if (> (var-get total-deposits) u0)
+                       (/ (* (var-get total-farming-balance) u100) (var-get total-deposits))
+                       u0)})
+
+(define-read-only (get-protocol-performance (protocol-id uint))
+  (let ((protocol (map-get? farming-protocols protocol-id))
+        (yields (map-get? protocol-yields protocol-id)))
+    (match protocol
+      p (match yields
+          y {protocol-name: (get protocol-name p),
+             total-staked: (get total-staked p),
+             total-earned: (get total-earned y),
+             yield-rate: (get last-yield-rate y),
+             harvest-count: (get harvest-count y),
+             active: (get active p)}
+          {protocol-name: (get protocol-name p),
+           total-staked: (get total-staked p),
+           total-earned: u0,
+           yield-rate: u0,
+           harvest-count: u0,
+           active: (get active p)})
+      {protocol-name: "",
+       total-staked: u0,
+       total-earned: u0,
+       yield-rate: u0,
+       harvest-count: u0,
+       active: false})))
+
+(define-private (calculate-user-farming-rewards (user principal))
+  (let ((user-deposit (get-deposit user))
+        (total-pool (var-get total-deposits))
+        (total-farming-yield (var-get total-yield)))
+    (if (and (> total-pool u0) (> user-deposit u0))
+      (/ (* user-deposit total-farming-yield) total-pool)
+      u0)))
