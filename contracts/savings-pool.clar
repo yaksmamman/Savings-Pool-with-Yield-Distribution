@@ -11,10 +11,12 @@
 
 ;; Data vars
 (define-data-var pool-locked bool false)
-(define-data-var lock-period uint u2592000) ;; 30 days in seconds
+(define-data-var lock-period uint u2592000)
 (define-data-var lock-start-time uint u0)
 (define-data-var total-deposits uint u0)
 (define-data-var total-yield uint u0)
+(define-data-var emergency-penalty-rate uint u10)
+(define-data-var total-penalty-collected uint u0)
 
 ;; Maps
 (define-map deposits principal uint)
@@ -29,6 +31,7 @@
     (map-set deposits caller (+ (default-to u0 (map-get? deposits caller)) amount))
     (var-set total-deposits (+ (var-get total-deposits) amount))
     (ok true)))
+
 (define-public (lock-pool)
   (begin
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
@@ -52,6 +55,7 @@
     (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
     (var-set total-yield (+ (var-get total-yield) amount))
     (ok true)))
+
 (define-public (withdraw)
   (let ((caller tx-sender)
         (user-deposit (default-to u0 (map-get? deposits caller)))
@@ -65,6 +69,30 @@
     (map-set withdrawals caller (+ previous-withdrawal total-amount))
     (var-set total-deposits (- (var-get total-deposits) user-deposit))
     (ok total-amount)))
+
+(define-public (emergency-withdraw)
+  (let ((caller tx-sender)
+        (user-deposit (default-to u0 (map-get? deposits caller)))
+        (previous-withdrawal (default-to u0 (map-get? withdrawals caller)))
+        (penalty-amount (/ (* user-deposit (var-get emergency-penalty-rate)) u100))
+        (withdrawal-amount (- user-deposit penalty-amount)))
+    (asserts! (var-get pool-locked) err-pool-not-locked)
+    (asserts! (> user-deposit u0) err-insufficient-balance)
+    (try! (as-contract (stx-transfer? withdrawal-amount tx-sender caller)))
+    (map-delete deposits caller)
+    (map-set withdrawals caller (+ previous-withdrawal withdrawal-amount))
+    (var-set total-deposits (- (var-get total-deposits) user-deposit))
+    (var-set total-penalty-collected (+ (var-get total-penalty-collected) penalty-amount))
+    (var-set total-yield (+ (var-get total-yield) penalty-amount))
+    (ok withdrawal-amount)))
+
+(define-public (set-penalty-rate (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (asserts! (<= new-rate u50) err-insufficient-balance)
+    (var-set emergency-penalty-rate new-rate)
+    (ok true)))
+
 ;; Read-only functions
 (define-read-only (get-deposit (user principal))
   (default-to u0 (map-get? deposits user)))
@@ -73,7 +101,9 @@
   {locked: (var-get pool-locked),
    total-deposits: (var-get total-deposits),
    total-yield: (var-get total-yield),
-   lock-start-time: (var-get lock-start-time)})
+   lock-start-time: (var-get lock-start-time),
+   penalty-rate: (var-get emergency-penalty-rate),
+   total-penalties: (var-get total-penalty-collected)})
 
 (define-read-only (get-user-yield-estimate (user principal))
   (let ((user-deposit (default-to u0 (map-get? deposits user))))
@@ -81,4 +111,9 @@
         u0
         (/ (* user-deposit (var-get total-yield)) (var-get total-deposits)))))
 
-        
+(define-read-only (get-emergency-withdrawal-preview (user principal))
+  (let ((user-deposit (default-to u0 (map-get? deposits user)))
+        (penalty-amount (/ (* user-deposit (var-get emergency-penalty-rate)) u100)))
+    {deposit: user-deposit,
+     penalty: penalty-amount,
+     withdrawal-amount: (- user-deposit penalty-amount)}))
