@@ -50,14 +50,19 @@ plan:
     - id: 0
       transactions:
         - emulated-contract-publish:
-            contract-name: enhanced-savings-pool
-            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: "contracts\\enhanced-savings-pool.clar"
-            clarity-version: 2
-        - emulated-contract-publish:
             contract-name: savings-pool
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
             path: "contracts\\savings-pool.clar"
+            clarity-version: 2
+        - emulated-contract-publish:
+            contract-name: dca-savings-pool
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\dca-savings-pool.clar"
+            clarity-version: 2
+        - emulated-contract-publish:
+            contract-name: enhanced-savings-pool
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\enhanced-savings-pool.clar"
             clarity-version: 2
         - emulated-contract-publish:
             contract-name: smart-insurance-pool

@@ -19,6 +19,11 @@ epoch = 2.5
 path = 'contracts/smart-insurance-pool.clar'
 clarity_version = 2
 epoch = 2.5
+
+[contracts.dca-savings-pool]
+path = 'contracts/dca-savings-pool.clar'
+clarity_version = 2
+epoch = 2.5
 [repl.analysis]
 passes = ['check_checker']
 
